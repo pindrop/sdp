@@ -14,8 +14,9 @@ func (s Session) appendAttributes(attrs Attributes) Session {
 }
 
 // Append encodes message to Session and returns result.
+//
+// See RFC 4566 Section 5.
 func (m *Message) Append(s Session) Session {
-	// see https://tools.ietf.org/html/rfc4566#section-5
 	s = s.AddVersion(m.Version)
 	s = s.AddOrigin(m.Origin)
 	s = s.AddSessionName(m.Name)
@@ -52,21 +53,21 @@ func (m *Message) Append(s Session) Session {
 	}
 	s = s.appendAttributes(m.Attributes)
 
-	for _, mm := range m.Medias {
-		s = s.AddMediaDescription(mm.Description)
-		if len(mm.Title) > 0 {
-			s = s.AddSessionInfo(mm.Title)
+	for i := range m.Medias {
+		s = s.AddMediaDescription(m.Medias[i].Description)
+		if len(m.Medias[i].Title) > 0 {
+			s = s.AddSessionInfo(m.Medias[i].Title)
 		}
-		if !mm.Connection.Blank() {
-			s = s.AddConnectionData(mm.Connection)
+		if !m.Medias[i].Connection.Blank() {
+			s = s.AddConnectionData(m.Medias[i].Connection)
 		}
-		for t, v := range mm.Bandwidths {
+		for t, v := range m.Medias[i].Bandwidths {
 			s = s.AddBandwidth(t, v)
 		}
-		if !mm.Encryption.Blank() {
-			s = s.AddEncryption(mm.Encryption)
+		if !m.Medias[i].Encryption.Blank() {
+			s = s.AddEncryption(m.Medias[i].Encryption)
 		}
-		s = s.appendAttributes(mm.Attributes)
+		s = s.appendAttributes(m.Medias[i].Attributes)
 	}
 	return s
 }

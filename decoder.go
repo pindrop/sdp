@@ -6,158 +6,13 @@ import (
 	"io"
 	"net"
 	"strconv"
-	"strings"
 	"time"
 	"unsafe"
 
 	"github.com/pkg/errors"
 )
 
-// Attributes is set of k:v.
-type Attributes map[string][]string
-
-// Value returns value of first attribute.
-func (a Attributes) Value(attribute string) string {
-	if len(a[attribute]) == 0 {
-		return blank
-	}
-	return a[attribute][0]
-}
-
-// Values returns list of values associated to attribute.
-func (a Attributes) Values(attribute string) []string {
-	return a[attribute]
-}
-
-// Flag returns true if set.
-func (a Attributes) Flag(flag string) bool {
-	return len(a[flag]) != 0
-}
-
-// Message is top level abstraction.
-type Message struct {
-	Version       int
-	Origin        Origin
-	Name          string
-	Info          string
-	Email         string
-	Phone         string
-	URI           string
-	Connection    ConnectionData
-	Attributes    Attributes
-	Medias        Medias
-	Encryption    Encryption
-	Bandwidths    map[BandwidthType]int
-	BandwidthType BandwidthType
-	Timing        []Timing
-	TZAdjustments []TimeZone
-}
-
-// Timing wraps "repeat times" and 	"timing" information.
-type Timing struct {
-	Start   time.Time
-	End     time.Time
-	Repeat  time.Duration
-	Active  time.Duration
-	Offsets []time.Duration
-}
-
-// Start returns start of session.
-func (m Message) Start() time.Time {
-	if len(m.Timing) == 0 {
-		return time.Time{}
-	}
-	return m.Timing[0].Start
-}
-
-// End returns end of session.
-func (m Message) End() time.Time {
-	if len(m.Timing) == 0 {
-		return time.Time{}
-	}
-	return m.Timing[0].End
-}
-
-// Flag returns true if set.
-func (m Message) Flag(flag string) bool {
-	if len(m.Attributes) > 0 {
-		return m.Attributes.Flag(flag)
-	}
-	return false
-}
-
 const blank = ""
-
-// Attribute returns string v.
-func (m Message) Attribute(attribute string) string {
-	if len(m.Attributes) > 0 {
-		return m.Attributes.Value(attribute)
-	}
-	return blank
-}
-
-// AddAttribute appends new k-v pair to attribute list.
-func (m *Message) AddAttribute(k, v string) {
-	m.Attributes = addAttribute(m.Attributes, k, v)
-}
-
-// AddFlag appends new flag to attribute list.
-func (m *Message) AddFlag(f string) {
-	m.AddAttribute(f, blank)
-}
-
-// Medias is list of Media.
-type Medias []Media
-
-// Encryption wraps encryption Key and Method.
-type Encryption struct {
-	Method string
-	Key    string
-}
-
-// Blank determines whether Encryption is blank value.
-func (e Encryption) Blank() bool {
-	return e.Equal(Encryption{})
-}
-
-// Equal returns e == b.
-func (e Encryption) Equal(b Encryption) bool {
-	return e == b
-}
-
-// Bandwidths is map of BandwidthsType and int (bytes per second).
-type Bandwidths map[BandwidthType]int
-
-// Media is media description and attributes.
-type Media struct {
-	Title       string
-	Description MediaDescription
-	Connection  ConnectionData
-	Attributes  Attributes
-	Encryption  Encryption
-	Bandwidths  Bandwidths
-}
-
-// AddAttribute appends new k-v pair to attribute list.
-func (m *Media) AddAttribute(k string, values ...string) {
-	v := strings.Join(values, " ")
-	m.Attributes = addAttribute(m.Attributes, k, v)
-}
-
-// AddFlag appends new flag to attribute list.
-func (m *Media) AddFlag(f string) {
-	m.AddAttribute(f, blank)
-}
-
-// Flag returns true if set.
-func (m *Media) Flag(f string) bool {
-	return m.Attributes.Flag(f)
-}
-
-// Attribute returns string v.
-func (m *Media) Attribute(k string) string {
-	return m.Attributes.Value(k)
-}
 
 // Decoder decodes session.
 type Decoder struct {
@@ -214,7 +69,7 @@ func (s section) String() string {
 	case sectionMedia:
 		return "m"
 	default:
-		panic("unexpected")
+		panic("BUG: section overflow")
 	}
 }
 
@@ -251,15 +106,28 @@ var orderingMedia = ordering{
 	TypeAttribute,
 }
 
+var errUnknownType = errors.New("unknown type")
+
+// isKnown returns true if t is defined in RFC 4566.
+func isKnown(t Type) bool {
+	switch t {
+	case TypeProtocolVersion,
+		TypeOrigin, TypeSessionName,
+		TypeSessionInformation, TypeURI,
+		TypeEmail, TypePhone,
+		TypeConnectionData, TypeBandwidth,
+		TypeTiming, TypeRepeatTimes,
+		TypeTimeZones, TypeEncryptionKey,
+		TypeAttribute, TypeMediaDescription:
+		return true
+	default:
+		return false
+	}
+}
+
 // isExpected determines if t is expected on pos in s section and returns nil,
 // if it is expected and DecodeError if not.
 func isExpected(t Type, s section, pos int) error {
-	//logger := log.WithField("t", t).WithFields(log.Fields{
-	//	"s": s,
-	//	"p": pos,
-	//})
-	//logger.Printf("isExpected(%s, %s, %d)", t, s, pos)
-
 	o := getOrdering(s)
 	if len(o) > pos {
 		for _, expected := range o[pos:] {
@@ -270,41 +138,33 @@ func isExpected(t Type, s section, pos int) error {
 			if isOptional(expected) {
 				continue
 			}
-			if isZeroOrMore(expected) {
-				//logger.Printf("%s is not necessary", expected)
-				continue
-			}
 		}
 	}
 
-	// checking possible section transitions
+	// Checking possible section transitions.
 	switch s {
 	case sectionSession:
 		if pos < orderingAfterTime && isExpected(t, sectionTime, 0) == nil {
-			//logger.Printf("s->t")
 			return nil
 		}
 		if isExpected(t, sectionMedia, 0) == nil {
-			//logger.Printf("s->m")
 			return nil
 		}
 	case sectionTime:
 		if isExpected(t, sectionSession, orderingAfterTime) == nil {
-			//logger.Printf("t->s")
-			return nil
-		}
-		if isExpected(t, sectionMedia, 0) == nil {
-			//logger.Printf("t->m")
 			return nil
 		}
 	case sectionMedia:
 		if pos != 0 && isExpected(t, sectionMedia, 0) == nil {
-			//logger.Printf("m->m")
 			return nil
 		}
 	}
-	msg := fmt.Sprintf("no matches in ordering array at %s[%d]",
-		s, pos,
+	if !isKnown(t) {
+		return errUnknownType
+	}
+	// Attribute is known, but out of order.
+	msg := fmt.Sprintf("no matches in ordering array at %s[%d] for %s",
+		s, pos, t,
 	)
 	err := newSectionDecodeError(s, msg)
 	return errors.Wrapf(err, "field %s is unexpected", t)
@@ -319,7 +179,7 @@ func getOrdering(s section) ordering {
 	case sectionTime:
 		return orderingTime
 	default:
-		panic("unexpected section")
+		panic("BUG: section overflow")
 	}
 }
 
@@ -378,11 +238,13 @@ func (d *Decoder) decodeKV() (string, string, error) {
 }
 
 func (d *Decoder) decodeTiming(m *Message) error {
-	//log.Println("decoding timing")
 	d.sPos = 0
 	d.section = sectionTime
 	for d.next() {
 		if err := isExpected(d.t, d.section, d.sPos); err != nil {
+			if canSkip(err) {
+				continue
+			}
 			return errors.Wrap(err, "decode failed")
 		}
 		if !isZeroOrMore(d.t) {
@@ -403,12 +265,14 @@ func (d *Decoder) decodeTiming(m *Message) error {
 }
 
 func (d *Decoder) decodeMedia(m *Message) error {
-	//log.Println("decoding media")
 	d.sPos = 0
 	d.section = sectionMedia
 	d.m = Media{}
 	for d.next() {
 		if err := isExpected(d.t, d.section, d.sPos); err != nil {
+			if canSkip(err) {
+				continue
+			}
 			return errors.Wrap(err, "decode failed")
 		}
 		if d.t == TypeMediaDescription && d.sPos != 0 {
@@ -507,9 +371,16 @@ func (d *Decoder) decodeEncryption(m *Message) error {
 	return nil
 }
 
+// ErrFailedToDecodeIP means that decoder failed to parse IP.
+var ErrFailedToDecodeIP = errors.New("invalid IP")
+
 func decodeIP(dst net.IP, v []byte) (net.IP, error) {
 	// ALLOCATIONS: suboptimal.
-	return net.ParseIP(string(v)), nil
+	ip := net.ParseIP(string(v))
+	if ip == nil {
+		return dst, ErrFailedToDecodeIP
+	}
+	return ip, nil
 }
 
 func decodeByte(dst []byte) (byte, error) {
@@ -572,7 +443,7 @@ func (d *Decoder) decodeConnectionData(m *Message) error {
 		m.Connection.AddressType = string(addressType)
 		m.Connection.NetworkType = string(netType)
 	}
-	// decoding address
+	// Decoding address.
 	// <base multicast address>[/<ttl>]/<number of addresses>
 	var (
 		base   []byte
@@ -744,9 +615,8 @@ func (d *Decoder) decodeTimingField(m *Message) error {
 	return nil
 }
 
-func decodeString(v []byte, s *string) error {
+func decodeString(v []byte, s *string) {
 	*s = b2s(v)
-	return nil
 }
 
 func decodeInt(v []byte, i *int) error {
@@ -797,24 +667,16 @@ func (d *Decoder) decodeOrigin(m *Message) error {
 		return errors.Wrap(err, "failed to decode origin")
 	}
 	o := m.Origin
-	if err = decodeString(p[0], &o.Username); err != nil {
-		return errors.Wrap(err, "failed to decode username")
-	}
+	decodeString(p[0], &o.Username)
 	if err = decodeInt(p[1], &o.SessionID); err != nil {
 		return errors.Wrap(err, "failed to decode sess-id")
 	}
 	if err = decodeInt(p[2], &o.SessionVersion); err != nil {
 		return errors.Wrap(err, "failed to decode sess-version")
 	}
-	if err = decodeString(p[3], &o.NetworkType); err != nil {
-		return errors.Wrap(err, "failed to decode net-type")
-	}
-	if err = decodeString(p[4], &o.AddressType); err != nil {
-		return errors.Wrap(err, "failed to decode addres-type")
-	}
-	if err = decodeString(p[5], &o.Address); err != nil {
-		return errors.Wrap(err, "failed to decode address")
-	}
+	decodeString(p[3], &o.NetworkType)
+	decodeString(p[4], &o.AddressType)
+	decodeString(p[5], &o.Address)
 	m.Origin = o
 	return nil
 }
@@ -919,7 +781,7 @@ func (d *Decoder) decodeTimeZoneAdjustments(m *Message) error {
 	return nil
 }
 
-func (d *Decoder) decodeMediaDescription(m *Message) error {
+func (d *Decoder) decodeMediaDescription(_ *Message) error {
 	// m=0<media> 1<port> 2<proto> 3<fmt> ...
 	var (
 		desc MediaDescription
@@ -934,9 +796,7 @@ func (d *Decoder) decodeMediaDescription(m *Message) error {
 		err = newSectionDecodeError(d.section, msg)
 		return errors.Wrap(err, "failed to decode media description")
 	}
-	if err = decodeString(p[0], &desc.Type); err != nil {
-		return errors.Wrap(err, "failed to decode media type")
-	}
+	decodeString(p[0], &desc.Type)
 	// port: port/ports_number
 	pp := bytes.Split(p[1], []byte{'/'})
 	if err = decodeInt(pp[0], &desc.Port); err != nil {
@@ -947,13 +807,11 @@ func (d *Decoder) decodeMediaDescription(m *Message) error {
 			return errors.Wrap(err, "failed to decode ports number")
 		}
 	}
-	if err = decodeString(p[2], &desc.Protocol); err != nil {
-		return errors.Wrap(err, "failed to decode protocol")
+	decodeString(p[2], &desc.Protocol)
+	for _, rawFormat := range p[3:] {
+		desc.Formats = append(desc.Formats, string(rawFormat))
 	}
-	if len(p) > 3 {
-		desc.Format = string(bytes.Join(p[3:], []byte{fieldsDelimiter}))
-		d.m.Description = desc
-	}
+	d.m.Description = desc
 	return nil
 }
 
@@ -990,8 +848,14 @@ func (d *Decoder) decodeField(m *Message) error {
 	case TypeMediaDescription:
 		return d.decodeMediaDescription(m)
 	default:
-		panic("unexpected field")
+		// d.t is explicitly checked before calling decodeField,
+		// so this code must be unreachable.
+		panic("BUG: unexpected filed type in decodeField")
 	}
+}
+
+func canSkip(err error) bool {
+	return errors.Cause(err) == errUnknownType
 }
 
 func (d *Decoder) decodeSession(m *Message) error {
@@ -999,6 +863,9 @@ func (d *Decoder) decodeSession(m *Message) error {
 	d.section = sectionSession
 	for d.next() {
 		if err := isExpected(d.t, d.section, d.sPos); err != nil {
+			if canSkip(err) {
+				continue
+			}
 			return errors.Wrap(err, "decode failed")
 		}
 		if !isZeroOrMore(d.t) {
@@ -1052,5 +919,5 @@ func (d *Decoder) Decode(m *Message) error {
 // Note it may break if string and/or slice header will change
 // in the future go versions.
 func b2s(b []byte) string {
-	return *(*string)(unsafe.Pointer(&b))
+	return *(*string)(unsafe.Pointer(&b)) // #nosec
 }

@@ -1,17 +1,19 @@
-[![Build Status](https://travis-ci.org/gortc/sdp.svg?branch=master)](https://travis-ci.org/gortc/sdp)
+[![Build Status](https://travis-ci.com/gortc/sdp.svg?branch=master)](https://travis-ci.com/gortc/sdp)
+[![Master status](https://tc.gortc.io/app/rest/builds/buildType:(id:sdp_MasterStatus)/statusIcon.svg)](https://tc.gortc.io/project.html?projectId=sdp&tab=projectOverview&guest=1)
 [![Build status](https://ci.appveyor.com/api/projects/status/gcxr3fq9ebadmu9b?svg=true)](https://ci.appveyor.com/project/ernado/sdp)
-[![Coverage Status](https://coveralls.io/repos/github/gortc/sdp/badge.svg?branch=master)](https://coveralls.io/github/gortc/sdp?branch=master)
 [![GoDoc](https://godoc.org/github.com/gortc/sdp?status.svg)](https://godoc.org/github.com/gortc/sdp)
+[![codecov](https://codecov.io/gh/gortc/sdp/branch/master/graph/badge.svg)](https://codecov.io/gh/gortc/sdp)
+[![stability-beta](https://img.shields.io/badge/stability-beta-33bbff.svg)](https://github.com/mkenney/software-guides/blob/master/STABILITY-BADGES.md#beta)
+[![Go Report Card](https://goreportcard.com/badge/github.com/gortc/sdp)](https://goreportcard.com/report/github.com/gortc/sdp)
+[![FOSSA Status](https://app.fossa.io/api/projects/git%2Bgithub.com%2Fgortc%2Fsdp.svg?type=shield)](https://app.fossa.io/projects/git%2Bgithub.com%2Fgortc%2Fsdp?ref=badge_shield)
 
-# SDP go implementation
-[RFC 4566](https://tools.ietf.org/html/rfc4566)
-SDP: Session Description Protocol in golang.
-
-In alpha stage.
+# SDP
+Package sdp implements SDP: Session Description Protocol [[RFC4566](https://tools.ietf.org/html/rfc4566)].
+Complies to [gortc principles](https://gortc.io/#principles) as core package.
 
 ### Examples
 See [examples](https://github.com/gortc/sdp/tree/master/examples) folder.
-Also there is [online SDP example](https://cydev.ru/sdp/) (temporary unavailable) that gets
+Also there is [online SDP example](https://gortc.io/x/sdp/) that gets
 `RTCPeerConnection.localDescription.sdp` using WebRTC, 
 sends it to server, decodes as `sdp.Session` and renders it on web page.
 
@@ -58,7 +60,7 @@ func main()  {
 		Description: sdp.MediaDescription{
 			Type:     "audio",
 			Port:     49170,
-			Format:   "0",
+			Formats:   []string{"0"},
 			Protocol: "RTP/AVP",
 		},
 	}
@@ -66,7 +68,7 @@ func main()  {
 		Description: sdp.MediaDescription{
 			Type:     "video",
 			Port:     51372,
-			Format:   "99",
+			Formats:   []string{"99"},
 			Protocol: "RTP/AVP",
 		},
 		Bandwidths: sdp.Bandwidths{
@@ -194,12 +196,12 @@ func main() {
 		AddMediaDescription(sdp.MediaDescription{
 			Type:     "video",
 			Port:     51372,
-			Format:   "99",
+			Formats:   []string{"99"},
 			Protocol: "RTP/AVP",
 		}).
 		AddAttribute("rtpmap", "99", "h263-1998/90000").
 		AddLine(sdp.TypeEmail, "test@test.com").
-		AddRaw('ф', "ОПАСНО").
+		AddRaw('ü', "vαlue").
 		AppendTo(b)
 	// and so on
 	fmt.Println(string(b))
@@ -208,7 +210,7 @@ func main() {
 	//	m=video 51372 RTP/AVP 99
 	//	a=rtpmap:99 h263-1998/90000
 	//	e=test@test.com
-	//  ф=ОПАСНО
+	//	ü=vαlue
 }
 ```
 
@@ -245,3 +247,27 @@ func main() {
 There are comments `// ALLOCATIONS: suboptimal.` and `// CPU: suboptimal. `
 that indicate suboptimal implementation that can be optimized. There are often
 a benchmarks for this pieces.
+
+### Benchmarks
+```
+goos: linux
+goarch: amd64
+pkg: github.com/gortc/sdp
+PASS
+benchmark                                    iter       time/iter   bytes alloc         allocs
+---------                                    ----       ---------   -----------         ------
+BenchmarkDecoder_Decode-12                 300000   4884.00 ns/op     3166 B/op   93 allocs/op
+BenchmarkEncode-12                        1000000   1577.00 ns/op        0 B/op    0 allocs/op
+BenchmarkSession_AddConnectionData-12    20000000    114.00 ns/op        0 B/op    0 allocs/op
+BenchmarkAppendIP-12                     50000000     37.90 ns/op        0 B/op    0 allocs/op
+BenchmarkAppendByte-12                  100000000     11.00 ns/op        0 B/op    0 allocs/op
+BenchmarkAppendInt-12                   100000000     11.90 ns/op        0 B/op    0 allocs/op
+BenchmarkSession_EX1-12                   3000000    578.00 ns/op       16 B/op    1 allocs/op
+BenchmarkAppendRune-12                  200000000      6.70 ns/op        0 B/op    0 allocs/op
+BenchmarkDecode-12                      100000000     13.10 ns/op        0 B/op    0 allocs/op
+BenchmarkDecodeSession-12                 5000000    234.00 ns/op        0 B/op    0 allocs/op
+ok  	github.com/gortc/sdp	16.820s
+```
+
+## License
+[![FOSSA Status](https://app.fossa.io/api/projects/git%2Bgithub.com%2Fgortc%2Fsdp.svg?type=large)](https://app.fossa.io/projects/git%2Bgithub.com%2Fgortc%2Fsdp?ref=badge_large)

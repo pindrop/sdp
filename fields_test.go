@@ -141,12 +141,12 @@ func TestSession_AddMediaDescription(t *testing.T) {
 		Port:        49170,
 		PortsNumber: 2,
 		Protocol:    "RTP/AVP",
-		Format:      "31",
+		Formats:     []string{"31", "32"},
 	}).AddMediaDescription(MediaDescription{
 		Type:     "audio",
 		Port:     49170,
 		Protocol: "RTP/AVP",
-		Format:   "555",
+		Formats:  []string{"555"},
 	})
 	shouldDecodeExpS(t, s, "media")
 }
@@ -206,13 +206,13 @@ func TestSession_EX1(t *testing.T) {
 			Type:     "audio",
 			Port:     49170,
 			Protocol: "RTP/AVP",
-			Format:   "0",
+			Formats:  []string{"0"},
 		}).
 		AddMediaDescription(MediaDescription{
 			Type:     "video",
 			Port:     51372,
 			Protocol: "RTP/AVP",
-			Format:   "99",
+			Formats:  []string{"99"},
 		}).
 		AddAttribute("rtpmap", "99", "h263-1998/90000")
 	shouldDecode(t, s, "sdp_session_ex1")
@@ -290,13 +290,13 @@ func BenchmarkSession_EX1(b *testing.B) {
 			Type:     "audio",
 			Port:     49170,
 			Protocol: "RTP/AVP",
-			Format:   "0",
+			Formats:  []string{"0"},
 		})
 		s = s.AddMediaDescription(MediaDescription{
 			Type:     "video",
 			Port:     51372,
 			Protocol: "RTP/AVP",
-			Format:   "99",
+			Formats:  []string{"99"},
 		})
 		s = s.AddAttribute("rtpmap", "99", "h263-1998/90000")
 		s = s.reset()
@@ -321,5 +321,309 @@ func TestNTP(t *testing.T) {
 		if outNTP != tt.in {
 			t.Errorf("%d != %d", outNTP, tt.in)
 		}
+	}
+}
+
+func TestAppendUint(t *testing.T) {
+	t.Run("Positive", func(t *testing.T) {
+		if !bytes.Equal(appendUint(nil, 1), []byte("1")) {
+			t.Error("not equal")
+		}
+	})
+	t.Run("Panic", func(t *testing.T) {
+		defer func() {
+			if err := recover(); err == nil {
+				t.Error("should panic")
+			}
+		}()
+		if bytes.Equal(appendUint(nil, -1), []byte("-1")) {
+			t.Error("should not equal")
+		}
+	})
+}
+
+func TestAppendByte(t *testing.T) {
+	for _, tc := range []struct {
+		in  byte
+		out []byte
+	}{
+		{0, []byte("0")},
+		{1, []byte("1")},
+		{10, []byte("10")},
+	} {
+		t.Run(fmt.Sprint(tc.in), func(t *testing.T) {
+			if !bytes.Equal(appendByte(nil, tc.in), tc.out) {
+				t.Error("not equal")
+			}
+		})
+	}
+}
+
+func TestSession_AddRaw(t *testing.T) {
+	s := new(Session).AddRaw('α', "räw")
+	shouldDecodeExpS(t, s, "raw")
+}
+
+func TestSession_AddLine(t *testing.T) {
+	s := new(Session).AddLine(TypeEmail, "test@test.com")
+	shouldDecodeExpS(t, s, "line")
+}
+
+func TestConnectionData_Equal(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		a, b  ConnectionData
+		value bool
+	}{
+		{
+			"blank",
+			ConnectionData{}, ConnectionData{}, true,
+		},
+		{
+			name: "AddressType",
+			a: ConnectionData{
+				AddressType: "1",
+			},
+			b: ConnectionData{
+				AddressType: "2",
+			},
+			value: false,
+		},
+		{
+			name: "IP",
+			a: ConnectionData{
+				AddressType: "1",
+				IP:          net.IPv4(127, 0, 0, 1),
+			},
+			b: ConnectionData{
+				AddressType: "1",
+				IP:          net.IPv4(127, 0, 0, 2),
+			},
+			value: false,
+		},
+		{
+			name: "TTL",
+			a: ConnectionData{
+				AddressType: "1",
+				IP:          net.IPv4(127, 0, 0, 1),
+				TTL:         1,
+			},
+			b: ConnectionData{
+				AddressType: "1",
+				IP:          net.IPv4(127, 0, 0, 1),
+			},
+			value: false,
+		},
+		{
+			name: "Addresses",
+			a: ConnectionData{
+				AddressType: "1",
+				IP:          net.IPv4(127, 0, 0, 1),
+				TTL:         1,
+				Addresses:   10,
+			},
+			b: ConnectionData{
+				AddressType: "1",
+				TTL:         1,
+				IP:          net.IPv4(127, 0, 0, 1),
+			},
+			value: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if v := tc.a.Equal(tc.b); v != tc.value {
+				t.Errorf("%s.Equal(%s) %v != %v", tc.a, tc.b, v, tc.value)
+			}
+		})
+	}
+}
+
+func TestGetAddressType(t *testing.T) {
+	for _, tc := range []struct {
+		addr        string
+		addressType string
+		out         string
+	}{
+		{
+			out: "IP4",
+		},
+		{
+			addr: "gortc.io",
+			out:  "IP4",
+		},
+		{
+			addr:        "gortc.io",
+			addressType: "IP6",
+			out:         "IP6",
+		},
+		{
+			addr: "127.0.0.1",
+			out:  "IP4",
+		},
+		{
+			addr: "localhost",
+			out:  "IP4",
+		},
+	} {
+		name := "blank"
+		if tc.addr != "" {
+			name = tc.addr
+		}
+		if tc.addressType != "" {
+			name = name + "-" + tc.addressType
+		}
+		t.Run(name, func(t *testing.T) {
+			if v := getAddressType(tc.addr, tc.addressType); v != tc.out {
+				t.Errorf("getAddressType(%q,%q) %q != %q",
+					tc.addr, tc.addressType, v, tc.out,
+				)
+			}
+		})
+	}
+}
+
+func TestConnectionData_String(t *testing.T) {
+	for _, tc := range []struct {
+		in  ConnectionData
+		out string
+	}{
+		{
+			out: "IP4 IP4 <NIL>",
+		},
+		{
+			in: ConnectionData{
+				Addresses: 1,
+				TTL:       10,
+				IP:        net.IPv4(127, 0, 0, 2),
+			},
+			out: "IP4 IP4 127.0.0.2/10/1",
+		},
+		{
+			in: ConnectionData{
+				NetworkType: "IP4",
+				Addresses:   1,
+				TTL:         10,
+				IP:          net.IPv4(127, 0, 0, 1),
+			},
+			out: "IP4 IP4 127.0.0.1/10/1",
+		},
+	} {
+		t.Run(tc.out, func(t *testing.T) {
+			if v := tc.in.String(); v != tc.out {
+				t.Error(v)
+			}
+		})
+	}
+}
+
+func TestOrigin_Equal(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		a, b  Origin
+		value bool
+	}{
+		{
+			name: "blank", value: true,
+		},
+		{
+			a:    Origin{Username: "a"},
+			b:    Origin{Username: "b"},
+			name: "Username", value: false,
+		},
+		{
+			a:    Origin{SessionID: 1},
+			b:    Origin{SessionID: 2},
+			name: "SessionID", value: false,
+		},
+		{
+			a:    Origin{NetworkType: "a"},
+			b:    Origin{NetworkType: "b"},
+			name: "NetworkType", value: false,
+		},
+		{
+			a:    Origin{AddressType: "a"},
+			b:    Origin{AddressType: "b"},
+			name: "AddressType", value: false,
+		},
+		{
+			a:    Origin{Address: "a"},
+			b:    Origin{Address: "b"},
+			name: "Address", value: false,
+		},
+		{
+			a:    Origin{SessionVersion: 1},
+			b:    Origin{SessionVersion: 2},
+			name: "SessionVersion", value: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if v := tc.a.Equal(tc.b); v != tc.value {
+				t.Error("unexpected equal result")
+			}
+		})
+	}
+}
+
+func TestMediaDescription_Equal(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		a, b  MediaDescription
+		equal bool
+	}{
+		{
+			name:  "Blank",
+			equal: true,
+		},
+		{
+			name: "Type",
+			a: MediaDescription{
+				Type: "foo",
+			},
+			equal: false,
+		},
+		{
+			name: "Protocol",
+			a: MediaDescription{
+				Protocol: "foo",
+			},
+			equal: false,
+		},
+		{
+			name: "Port",
+			a: MediaDescription{
+				Port: 100,
+			},
+			equal: false,
+		},
+		{
+			name: "PortsNumber",
+			a: MediaDescription{
+				PortsNumber: 100,
+			},
+			equal: false,
+		},
+		{
+			name: "FormatsLength",
+			a: MediaDescription{
+				Formats: []string{"1"},
+			},
+			equal: false,
+		},
+		{
+			name: "FormatsValue",
+			a: MediaDescription{
+				Formats: []string{"1"},
+			},
+			b: MediaDescription{
+				Formats: []string{"2"},
+			},
+			equal: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.a.Equal(tc.b) != tc.equal {
+				t.Error("incorrect equality test")
+			}
+		})
 	}
 }

@@ -1,6 +1,7 @@
 package sdp
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"testing"
@@ -139,9 +140,9 @@ func TestDecoder_Decode(t *testing.T) {
 					Type:     "audio",
 					Port:     49170,
 					Protocol: "RTP/AVP",
-					Format:   "0",
+					Formats:  []string{"0"},
 				}
-				if m.Medias[0].Description != mExp {
+				if !m.Medias[0].Description.Equal(mExp) {
 					t.Error("m", m.Medias[0].Description, "!=", mExp)
 				}
 				// video 51372 RTP/AVP 99
@@ -149,10 +150,16 @@ func TestDecoder_Decode(t *testing.T) {
 					Type:     "video",
 					Port:     51372,
 					Protocol: "RTP/AVP",
-					Format:   "99",
+					Formats:  []string{"99"},
 				}
-				if m.Medias[1].Description != mExp {
+				if !m.Medias[1].Description.Equal(mExp) {
 					t.Error("m", m.Medias[1].Description, "!=", mExp)
+				}
+				if m.Medias[1].PayloadFormat("99") != "h263-1998/90000" {
+					t.Error("incorrect payload  format")
+				}
+				if m.Medias[1].PayloadFormat("0") != "" {
+					t.Error("incorrect payload  format")
 				}
 			}
 		})
@@ -318,6 +325,10 @@ func TestDecoder_Errors(t *testing.T) {
 		"sdp_session_ex_err47", // ConnectionData: Invalid number of addresses in media secion
 		"sdp_session_ex_err48", // ConnectionData: Invalid number of addresses with ttl in media secion
 		"sdp_session_ex_err49", // ConnectionData: Invalid number of addresses IPV6 in media secion
+		"sdp_session_ex_err50", // RepeatTimes: Unexpected transition
+		"sdp_session_ex_err51", // Media: Unexpected transition
+		"sdp_session_ex_err52", // ConnectionData: Invalid IPv4
+		"sdp_session_ex_err53", // Bandwidth: not K-V pair
 	}
 	var (
 		s   Session
@@ -369,6 +380,70 @@ func TestDecoder_ExMediaConnection(t *testing.T) {
 func TestDecoder_NoMediaFmt(t *testing.T) {
 	m := new(Message)
 	tData := loadData(t, "sdp_session_no_media_fmt", testNL)
+	session, err := DecodeSession(tData, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder := NewDecoder(session)
+	if err := decoder.Decode(m); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSectionOverflows(t *testing.T) {
+	mustOverflow := func(t *testing.T) {
+		if err := recover(); err != "BUG: section overflow" {
+			t.Error("should panic")
+		}
+	}
+	t.Run("String", func(t *testing.T) {
+		defer mustOverflow(t)
+		fmt.Print(section(123).String())
+	})
+	t.Run("Ordering", func(t *testing.T) {
+		defer mustOverflow(t)
+		fmt.Print(getOrdering(section(123)))
+	})
+}
+
+func TestDecoderUnexpectedField(t *testing.T) {
+	mustBug := func(t *testing.T) {
+		if err := recover(); err != "BUG: unexpected filed type in decodeField" {
+			t.Error("should panic")
+		}
+	}
+	d := NewDecoder(Session{})
+	t.Run("ShouldPanic", func(t *testing.T) {
+		defer mustBug(t)
+		d.t = Type('1')
+		d.decodeField(nil)
+	})
+}
+
+func TestDecoderNettypeEmpty(t *testing.T) {
+	d := NewDecoder(Session{})
+	m := &Message{}
+	if err := d.decodeConnectionData(m); err == nil {
+		t.Error("should error")
+	}
+}
+
+func TestDecodeLastTiming(t *testing.T) {
+	m := new(Message)
+	tData := loadData(t, "sdp_session_ex_lasttiming", testNL)
+	session, err := DecodeSession(tData, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder := NewDecoder(session)
+	if err := decoder.Decode(m); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDecodeUnknownType(t *testing.T) {
+	m := new(Message)
+	tData := loadData(t, "sdp_session_ex_media_unknown_type", testNL)
 	session, err := DecodeSession(tData, nil)
 	if err != nil {
 		t.Fatal(err)
